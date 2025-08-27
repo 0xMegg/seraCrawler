@@ -5,6 +5,7 @@ import urllib.parse
 import platform
 import os
 import random
+import csv
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -22,7 +23,184 @@ class NaverMapCrawler:
         self.setup_driver()
         self.setup_logging()
         self.processed_count = 0
-        self.batch_size = 100  # 100개마다 새로운 파일 저장
+        self.batch_size = 1  # 1개씩 실시간 저장
+        self.result_file = None
+        self.csv_writer = None
+        
+    def clean_original_data(self, input_file):
+        """원본 데이터 정리 및 순번 재정렬"""
+        try:
+            print(f"원본 데이터 정리 시작: {input_file}")
+            
+            # CSV 파일 읽기
+            df = pd.read_csv(input_file)
+            print(f"원본 데이터: {len(df)}개")
+            
+            # 중복 제거 (사업장명 기준)
+            df_clean = df.drop_duplicates(subset=['사업장명'])
+            print(f"중복 제거 후: {len(df_clean)}개")
+            
+            # 순번 재정렬
+            df_clean['순번'] = range(1, len(df_clean) + 1)
+            print("순번 재정렬 완료")
+            
+            # 정리된 파일 저장
+            timestamp = datetime.now().strftime("%y%m%d%H%M%S")
+            cleaned_file = f'stores_cleaned_{timestamp}.csv'
+            df_clean.to_csv(cleaned_file, index=False, encoding='utf-8-sig')
+            print(f"정리된 파일 저장: {cleaned_file}")
+            
+            # 컬럼 정보 출력
+            print(f"📊 정리된 컬럼: {list(df_clean.columns)}")
+            print(f"📊 총 {len(df_clean.columns)}개 컬럼")
+            
+            self.logger.info(f"원본 데이터 정리 완료: {cleaned_file}")
+            return cleaned_file
+            
+        except Exception as e:
+            self.logger.error(f"원본 데이터 정리 중 오류: {e}")
+            print(f"원본 데이터 정리 중 오류: {e}")
+            return input_file  # 오류 시 원본 파일 반환
+        
+    def validate_index_sequence(self, results):
+        """인덱스 순서 검증"""
+        try:
+            if not results:
+                return True
+                
+            expected_indices = list(range(1, len(results) + 1))
+            actual_indices = [r['순번'] for r in results]
+            
+            is_valid = expected_indices == actual_indices
+            
+            if not is_valid:
+                print(f"⚠️ 인덱스 순서 오류 발견!")
+                print(f"예상: {expected_indices[:10]}...")
+                print(f"실제: {actual_indices[:10]}...")
+                self.logger.warning(f"인덱스 순서 오류: 예상 {expected_indices[:10]}, 실제 {actual_indices[:10]}")
+            
+            return is_valid
+            
+        except Exception as e:
+            print(f"인덱스 검증 중 오류: {e}")
+            return False
+    
+    def get_update_status(self, original_phone, new_phone, update_status):
+        """업데이트 상태 및 코멘트 생성"""
+        try:
+            if not original_phone and new_phone:
+                return f"기존에 전화번호가 없었는데 새로 발견: {new_phone}"
+            elif original_phone and new_phone:
+                if original_phone == new_phone:
+                    return "기존 전화번호와 동일합니다"
+                else:
+                    return f"전화번호가 변경되었습니다 (기존: {original_phone} → 새: {new_phone})"
+            elif not new_phone:
+                if update_status == "결과없음":
+                    return "네이버 지도에서 해당 업체를 찾을 수 없었습니다"
+                elif update_status == "MULTIPLE_RESULTS_NO_PHONE":
+                    return "네이버 지도에서 여러 결과가 나왔지만 전화번호 정보가 없었습니다"
+                else:
+                    return f"전화번호 수집 실패: {update_status}"
+            else:
+                return "처리 중 오류가 발생했습니다"
+        except Exception as e:
+            return f"상태 생성 중 오류: {str(e)}"
+    
+    def get_address_similarity_score(self, original_address, new_phone):
+        """주소 유사도 점수 계산 (전화번호 수집 성공 시에만)"""
+        try:
+            if not new_phone:
+                return 0
+            
+            # 현재 처리 중인 원본 주소와 수집된 주소 비교
+            if hasattr(self, 'current_collected_address') and self.current_collected_address:
+                return self.compare_address_similarity(self.current_collected_address)
+            else:
+                return 0
+        except Exception as e:
+            print(f"주소 유사도 점수 계산 중 오류: {e}")
+            return 0
+    
+    def get_collected_address(self, new_phone):
+        """수집된 주소 반환"""
+        try:
+            if not new_phone:
+                return ""
+            
+            if hasattr(self, 'current_collected_address') and self.current_collected_address:
+                return self.current_collected_address
+            else:
+                return "주소 정보 수집 실패"
+        except Exception as e:
+            return f"주소 수집 중 오류: {str(e)}"
+    
+    def get_confidence_grade(self, address_score):
+        """신뢰도 등급 결정"""
+        try:
+            if address_score >= 8:
+                return "매우 높음 (95%+ 정확)"
+            elif address_score >= 7:
+                return "높음 (80%+ 정확)"
+            elif address_score >= 5:
+                return "보통 (60%+ 정확)"
+            else:
+                return "낮음 (40% 이하 정확)"
+        except Exception as e:
+            return "등급 계산 실패"
+    
+    def initialize_result_file(self):
+        """결과 파일 초기화 (1개씩 실시간 저장용)"""
+        try:
+            timestamp = datetime.now().strftime("%y%m%d%H%M%S")
+            self.result_file = f'stores_crawling_realtime_{timestamp}.csv'
+            
+            # CSV 헤더 작성
+            headers = [
+                '순번', '사업장명', '인허가일자', '영업상태명', 
+                '기존_소재지전화', '새_소재지전화', 
+                '소재지전체주소', '도로명전체주소', '도로명우편번호', 
+                '업태구분명', '위생업태명', 
+                '업데이트_상태', '주소_유사도_점수', '수집된_주소', '신뢰도_등급'
+            ]
+            
+            with open(self.result_file, 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+            
+            print(f"📁 실시간 저장 파일 초기화: {self.result_file}")
+            self.logger.info(f"실시간 저장 파일 초기화: {self.result_file}")
+            
+        except Exception as e:
+            print(f"결과 파일 초기화 중 오류: {e}")
+            self.logger.error(f"결과 파일 초기화 중 오류: {e}")
+    
+    def save_single_result(self, result):
+        """단일 결과 실시간 저장"""
+        try:
+            if not self.result_file:
+                print("결과 파일이 초기화되지 않았습니다.")
+                return False
+            
+            # CSV에 한 줄씩 추가
+            with open(self.result_file, 'a', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    result['순번'], result['사업장명'], result['인허가일자'], 
+                    result['영업상태명'], result['기존_소재지전화'], 
+                    result['새_소재지전화'], result['소재지전체주소'], 
+                    result['도로명전체주소'], result['도로명우편번호'], 
+                    result['업태구분명'], result['위생업태명'], 
+                    result['업데이트_상태'], result['주소_유사도_점수'], 
+                    result['수집된_주소'], result['신뢰도_등급']
+                ])
+            
+            return True
+            
+        except Exception as e:
+            print(f"단일 결과 저장 중 오류: {e}")
+            self.logger.error(f"단일 결과 저장 중 오류: {e}")
+            return False
         
     def setup_driver(self):
         """Chrome WebDriver 설정 (맥OS 호환성 고려)"""
@@ -175,15 +353,31 @@ class NaverMapCrawler:
         print(f"새로운 로그 파일 생성: {log_filename}")
         
     def save_batch_results(self, results, batch_number):
-        """배치별 결과 저장"""
+        """배치별 결과 저장 (새로운 컬럼 구조)"""
         timestamp = datetime.now().strftime("%y%m%d%H%M%S")
         result_filename = f"stores_crawling_batch{batch_number}_{timestamp}.csv"
         
+        # 컬럼 순서 정의
+        column_order = [
+            '순번', '사업장명', '인허가일자', '영업상태명', 
+            '기존_소재지전화', '새_소재지전화', 
+            '소재지전체주소', '도로명전체주소', '도로명우편번호', 
+            '업태구분명', '위생업태명', 
+            '업데이트_상태', '주소_유사도_점수', '수집된_주소', '신뢰도_등급'
+        ]
+        
         result_df = pd.DataFrame(results)
+        
+        # 컬럼 순서 재정렬
+        result_df = result_df[column_order]
+        
         result_df.to_csv(result_filename, index=False, encoding='utf-8-sig')
         
         self.logger.info(f"배치 {batch_number} 결과 저장 완료: {result_filename}")
         print(f"배치 {batch_number} 결과 저장 완료: {result_filename}")
+        print(f"📊 저장된 컬럼: {len(column_order)}개")
+        print(f"📊 저장된 데이터: {len(result_df)}개")
+        
         return result_filename
         
     def extract_address_parts(self, address):
@@ -220,6 +414,8 @@ class NaverMapCrawler:
         try:
             # 원본 주소 저장
             self.current_original_address = original_address
+            # 수집된 주소 초기화
+            self.current_collected_address = ""
             
             # 1차 검색어: 사업장명 + 동이름
             search_query = f"{business_name} {dong_name}"
@@ -448,6 +644,9 @@ class NaverMapCrawler:
             if not original_address:
                 print("원본 주소 정보가 없음")
                 return 0
+            
+            # 수집된 주소 저장
+            self.current_collected_address = search_address
             
             print(f"원본 주소: {original_address}")
             print(f"검색 주소: {search_address}")
@@ -717,11 +916,16 @@ class NaverMapCrawler:
                 return None, "결과없음"
                 
     def update_phone_numbers(self, csv_file, test_count=None):
-        """전화번호 업데이트 메인 함수"""
+        """전화번호 업데이트 메인 함수 (1개씩 실시간 저장)"""
         try:
             # CSV 파일 읽기
             print(f"CSV 파일 읽기: {csv_file}")
             df = pd.read_csv(csv_file)
+            
+            # 순번 재정렬 (안전장치)
+            print("순번 재정렬 시작...")
+            df['순번'] = range(1, len(df) + 1)
+            print("순번 재정렬 완료")
             
             # 전체 데이터 또는 테스트 데이터 선택
             if test_count:
@@ -731,7 +935,12 @@ class NaverMapCrawler:
                 test_df = df.copy()
                 print(f"전체 데이터 {len(df)}개 선택")
             
-            # 결과 저장용 데이터프레임
+            # 실시간 저장 파일 초기화
+            print("실시간 저장 파일 초기화 중...")
+            self.initialize_result_file()
+            print("실시간 저장 파일 초기화 완료")
+            
+            # 결과 저장용 리스트 (메모리 효율성을 위해 최소한만 유지)
             results = []
             
             for index, row in test_df.iterrows():
@@ -790,14 +999,30 @@ class NaverMapCrawler:
                         update_status = "결과없음"
                         new_phone_for_save = None
                     
-                    # 결과 저장
-                    results.append({
+                    # 결과 데이터 생성
+                    result_data = {
                         '순번': row['순번'],
                         '사업장명': row['사업장명'],
-                        '기존전화번호': row['소재지전화'],
-                        '새전화번호': new_phone_for_save,
-                        '업데이트': update_status
-                    })
+                        '인허가일자': row['인허가일자'],
+                        '영업상태명': row['영업상태명'],
+                        '기존_소재지전화': row['소재지전화'],
+                        '새_소재지전화': new_phone_for_save,
+                        '소재지전체주소': row['소재지전체주소'],
+                        '도로명전체주소': row['도로명전체주소'],
+                        '도로명우편번호': row['도로명우편번호'],
+                        '업태구분명': row['업태구분명'],
+                        '위생업태명': row['위생업태명'],
+                        '업데이트_상태': self.get_update_status(row['소재지전화'], new_phone_for_save, update_status),
+                        '주소_유사도_점수': self.get_address_similarity_score(row['소재지전체주소'], new_phone_for_save),
+                        '수집된_주소': self.get_collected_address(new_phone_for_save),
+                        '신뢰도_등급': self.get_confidence_grade(self.get_address_similarity_score(row['소재지전체주소'], new_phone_for_save))
+                    }
+                    
+                    # 실시간 저장 (1개씩)
+                    if self.save_single_result(result_data):
+                        print(f"✅ 실시간 저장 완료: {row['사업장명']}")
+                    else:
+                        print(f"❌ 실시간 저장 실패: {row['사업장명']}")
                     
                     print(f"결과: {update_status}")
                     if new_phone:
@@ -810,57 +1035,52 @@ class NaverMapCrawler:
                     print(f"{wait_time:.1f}초 대기 중... (네이버 차단 방지 + 랜덤)")
                     time.sleep(wait_time)
                     
-                    # 100개마다 배치 저장 및 새로운 로그 파일 생성
+                    # 처리 카운트 증가
                     self.processed_count += 1
                     
-                    # 진행 상황 표시
-                    if self.processed_count % 25 == 0:
-                        print(f"진행 상황: {self.processed_count}개 처리됨")
+                    # 진행 상황 표시 (10개마다)
+                    if self.processed_count % 10 == 0:
+                        print(f"🎯 진행 상황: {self.processed_count}개 처리됨 (실시간 저장)")
                     
-                    if self.processed_count % self.batch_size == 0:
-                        batch_number = self.processed_count // self.batch_size
-                        print(f"\n{'='*60}")
-                        print(f"🎉 배치 {batch_number} 완료! ({self.processed_count}개 처리됨)")
-                        print(f"{'='*60}")
-                        
-                        # 현재 배치 결과 저장
-                        saved_file = self.save_batch_results(results, batch_number)
-                        print(f"📁 배치 {batch_number} 결과 저장됨: {saved_file}")
-                        
-                        # 새로운 로그 파일 생성
+                    # 로그 파일 새로 생성 (100개마다)
+                    if self.processed_count % 100 == 0:
+                        print(f"\n📝 100개 처리 완료! 새로운 로그 파일 생성 중...")
                         self.create_new_logging()
-                        print(f"📝 새로운 로그 파일 생성됨: {self.current_log_filename}")
-                        
-                        # 결과 리스트 초기화 (다음 배치를 위해)
-                        results = []
-                        print(f"🔄 배치 {batch_number} 완료 후 결과 리스트 초기화됨")
-                        print(f"⏳ 다음 배치 시작 준비 완료...")
-                        print(f"{'='*60}\n")
+                        print(f"✅ 새로운 로그 파일 생성됨: {self.current_log_filename}")
                     
                 except Exception as e:
                     self.logger.error(f"행 처리 중 오류 발생: {e}")
                     print(f"행 처리 중 오류 발생: {e}")
-                    results.append({
+                    # 오류 발생 시에도 실시간 저장
+                    error_data = {
                         '순번': row['순번'],
                         '사업장명': row['사업장명'],
-                        '기존전화번호': row['소재지전화'],
-                        '새전화번호': None,
-                        '업데이트': f'오류: {str(e)}'
-                    })
+                        '인허가일자': row['인허가일자'],
+                        '영업상태명': row['영업상태명'],
+                        '기존_소재지전화': row['소재지전화'],
+                        '새_소재지전화': None,
+                        '소재지전체주소': row['소재지전체주소'],
+                        '도로명전체주소': row['도로명전체주소'],
+                        '도로명우편번호': row['도로명우편번호'],
+                        '업태구분명': row['업태구분명'],
+                        '위생업태명': row['위생업태명'],
+                        '업데이트_상태': f'오류 발생: {str(e)}',
+                        '주소_유사도_점수': 0,
+                        '수집된_주소': "",
+                        '신뢰도_등급': "오류 발생"
+                    }
                     
-            # 마지막 배치 결과 저장 (100개 미만인 경우)
-            if results:
-                final_batch_number = (self.processed_count // self.batch_size) + 1
-                if self.processed_count % self.batch_size != 0:
-                    final_batch_number = (self.processed_count // self.batch_size) + 1
-                else:
-                    final_batch_number = self.processed_count // self.batch_size
+                    # 오류 데이터도 실시간 저장
+                    if self.save_single_result(error_data):
+                        print(f"✅ 오류 데이터 실시간 저장 완료: {row['사업장명']}")
+                    else:
+                        print(f"❌ 오류 데이터 저장 실패: {row['사업장명']}")
                     
-                self.save_batch_results(results, final_batch_number)
-            
-            self.logger.info(f"전체 처리 완료: 총 {self.processed_count}개 처리됨")
-            print(f"전체 처리 완료: 총 {self.processed_count}개 처리됨")
-            return f"총 {self.processed_count}개 처리 완료"
+            # 실시간 저장 완료
+            self.logger.info(f"전체 처리 완료: 총 {self.processed_count}개 처리됨 (실시간 저장)")
+            print(f"🎉 전체 처리 완료: 총 {self.processed_count}개 처리됨")
+            print(f"📁 결과 파일: {self.result_file}")
+            return f"총 {self.processed_count}개 처리 완료 (실시간 저장)"
             
         except Exception as e:
             self.logger.error(f"전체 처리 중 오류: {e}")
@@ -1119,19 +1339,35 @@ if __name__ == "__main__":
     crawler = NaverMapCrawler()
     
     try:
-        # stores.csv 파일이 존재하는지 확인
-        input_file = "stores.csv"
-        if not os.path.exists(input_file):
-            print(f"오류: {input_file} 파일을 찾을 수 없습니다.")
-            exit(1)
+        # 원본 데이터 파일 선택
+        original_file = "거제도 db - 음식점.csv"
+        if os.path.exists(original_file):
+            print(f"원본 데이터 발견: {original_file}")
+            print("원본 데이터 정리 시작...")
             
-        print(f"입력 파일: {input_file}")
-        # 전체 데이터 처리 (테스트하려면 test_count=10 등으로 설정)
-        result_file = crawler.update_phone_numbers(input_file, test_count=None)
+            # 1단계: 원본 데이터 정리 및 순번 재정렬
+            cleaned_file = crawler.clean_original_data(original_file)
+            print(f"정리된 파일: {cleaned_file}")
+            
+            # 2단계: 정리된 파일로 크롤링 실행
+            print("크롤링 시작...")
+            result_file = crawler.update_phone_numbers(cleaned_file, test_count=None)
+            
+        else:
+            # 원본 파일이 없으면 stores.csv 사용
+            input_file = "stores.csv"
+            if not os.path.exists(input_file):
+                print(f"오류: {input_file} 파일을 찾을 수 없습니다.")
+                exit(1)
+                
+            print(f"입력 파일: {input_file}")
+            result_file = crawler.update_phone_numbers(input_file, test_count=None)
+        
         if result_file:
             print(f"\n크롤링 완료! {result_file}")
         else:
             print("\n크롤링 실패")
+            
     except KeyboardInterrupt:
         print("\n사용자에 의해 중단됨")
     except Exception as e:
