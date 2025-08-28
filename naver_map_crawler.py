@@ -44,6 +44,9 @@ class NaverMapCrawler:
             df_clean['순번'] = range(1, len(df_clean) + 1)
             print("순번 재정렬 완료")
             
+            # 컬럼명 정리 (소재지전화 → 기존소재지전화로 변경하지 않음)
+            # 원본 컬럼명 그대로 유지
+            
             # 정리된 파일 저장
             timestamp = datetime.now().strftime("%y%m%d%H%M%S")
             cleaned_file = f'stores_cleaned_{timestamp}.csv'
@@ -131,23 +134,12 @@ class NaverMapCrawler:
             if hasattr(self, 'current_collected_address') and self.current_collected_address:
                 return self.current_collected_address
             else:
-                return "주소 정보 수집 실패"
+                # 전화번호는 수집되었지만 주소 정보가 없는 경우
+                return "전화번호 수집 성공 (주소 정보 없음)"
         except Exception as e:
             return f"주소 수집 중 오류: {str(e)}"
     
-    def get_confidence_grade(self, address_score):
-        """신뢰도 등급 결정"""
-        try:
-            if address_score >= 8:
-                return "매우 높음 (95%+ 정확)"
-            elif address_score >= 7:
-                return "높음 (80%+ 정확)"
-            elif address_score >= 5:
-                return "보통 (60%+ 정확)"
-            else:
-                return "낮음 (40% 이하 정확)"
-        except Exception as e:
-            return "등급 계산 실패"
+
     
     def initialize_result_file(self):
         """결과 파일 초기화 (1개씩 실시간 저장용)"""
@@ -161,7 +153,7 @@ class NaverMapCrawler:
                 '기존_소재지전화', '새_소재지전화', 
                 '소재지전체주소', '도로명전체주소', '도로명우편번호', 
                 '업태구분명', '위생업태명', 
-                '업데이트_상태', '주소_유사도_점수', '수집된_주소', '신뢰도_등급'
+                '업데이트_상태', '주소_유사도_점수', '수집된_주소'
             ]
             
             with open(self.result_file, 'w', encoding='utf-8-sig', newline='') as f:
@@ -192,7 +184,7 @@ class NaverMapCrawler:
                     result['도로명전체주소'], result['도로명우편번호'], 
                     result['업태구분명'], result['위생업태명'], 
                     result['업데이트_상태'], result['주소_유사도_점수'], 
-                    result['수집된_주소'], result['신뢰도_등급']
+                    result['수집된_주소']
                 ])
             
             return True
@@ -293,25 +285,7 @@ class NaverMapCrawler:
             else:
                 raise e
         
-    def simulate_human_behavior(self):
-        """자연스러운 사용자 행동 시뮬레이션"""
-        try:
-            # 랜덤한 마우스 움직임
-            actions = ActionChains(self.driver)
-            x_offset = random.randint(-100, 100)
-            y_offset = random.randint(-100, 100)
-            actions.move_by_offset(x_offset, y_offset)
-            actions.perform()
-            
-            # 랜덤한 스크롤
-            scroll_amount = random.randint(-300, 300)
-            self.driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
-            
-            # 짧은 대기
-            time.sleep(random.uniform(0.5, 1.5))
-            
-        except Exception as e:
-            print(f"사용자 행동 시뮬레이션 중 오류: {e}")
+
     
     def setup_logging(self):
         """로깅 설정"""
@@ -432,10 +406,6 @@ class NaverMapCrawler:
             self.driver.get(search_url)
             print("1차 검색 페이지 로딩 완료")
             
-            # 자연스러운 사용자 행동 시뮬레이션
-            print("자연스러운 사용자 행동 시뮬레이션 중...")
-            self.simulate_human_behavior()
-            
             # 랜덤 대기 시간으로 봇 탐지 회피
             wait_time = random.uniform(4.0, 7.0)
             print(f"1차 검색 결과 로딩 대기 중... ({wait_time:.1f}초)")
@@ -460,10 +430,6 @@ class NaverMapCrawler:
             print("2차 검색 페이지 로딩 중...")
             self.driver.get(search_url)
             print("2차 검색 페이지 로딩 완료")
-            
-            # 자연스러운 사용자 행동 시뮬레이션
-            print("자연스러운 사용자 행동 시뮬레이션 중...")
-            self.simulate_human_behavior()
             
             # 랜덤 대기 시간으로 봇 탐지 회피
             wait_time = random.uniform(4.0, 7.0)
@@ -553,6 +519,7 @@ class NaverMapCrawler:
             top_results = results[:3]
             best_result_index = None
             best_score = -1
+            best_address = ""
             
             for i, result in enumerate(top_results):
                 try:
@@ -580,6 +547,7 @@ class NaverMapCrawler:
                             if score > best_score:
                                 best_score = score
                                 best_result_index = i
+                                best_address = search_address  # 최적 결과의 주소 저장
                         else:
                             print(f"결과 {i+1}에서 span.Pb4bU를 찾을 수 없음")
                             # 메인 페이지로 복귀
@@ -598,6 +566,32 @@ class NaverMapCrawler:
             # 최적 결과에서 전화번호 추출
             if best_result_index is not None:
                 print(f"최적 결과 선택 (인덱스: {best_result_index}, 점수: {best_score})")
+            else:
+                # 모든 결과의 주소 유사도 점수가 0인 경우, 첫 번째 결과를 선택
+                print("모든 결과의 주소 유사도 점수가 0입니다. 첫 번째 결과를 선택합니다.")
+                best_result_index = 0
+                best_score = 0
+                
+                # 첫 번째 결과의 주소 정보 가져오기
+                try:
+                    self.driver.switch_to.frame("searchIframe")
+                    first_result = top_results[0]
+                    address_elements = first_result.find_elements(By.CSS_SELECTOR, "span.Pb4bU")
+                    if address_elements:
+                        best_address = address_elements[0].text.strip()
+                        print(f"첫 번째 결과 주소: {best_address}")
+                    self.driver.switch_to.default_content()
+                except Exception as e:
+                    print(f"첫 번째 결과 주소 가져오기 중 오류: {e}")
+                    self.driver.switch_to.default_content()
+            
+            if best_result_index is not None:
+                print(f"최적 결과 선택 (인덱스: {best_result_index}, 점수: {best_score})")
+                
+                # 최적 결과의 주소를 current_collected_address에 저장
+                if best_address:
+                    self.current_collected_address = best_address
+                    print(f"최적 결과 주소 저장: {best_address}")
                 
                 # 최적 결과 클릭하여 상세 정보 로드
                 try:
@@ -644,9 +638,6 @@ class NaverMapCrawler:
             if not original_address:
                 print("원본 주소 정보가 없음")
                 return 0
-            
-            # 수집된 주소 저장
-            self.current_collected_address = search_address
             
             print(f"원본 주소: {original_address}")
             print(f"검색 주소: {search_address}")
@@ -726,6 +717,35 @@ class NaverMapCrawler:
                         print(f"찾은 전화번호 텍스트: '{phone_number}'")
                         if phone_number and len(phone_number) > 5:
                             print(f"✅ entryIframe에서 전화번호 발견: {phone_number}")
+                            
+                            # 주소 정보도 수집 (다양한 선택자 시도)
+                            try:
+                                # 여러 주소 선택자 시도
+                                address_selectors = [
+                                    "span.LDgIH",  # 네이버 지도 단일 결과 주소 요소
+                                    "span.address",
+                                    "span.Pb4bU",  # 네이버 지도 주소 요소
+                                    "div.address",
+                                    "span[data-testid='address']",
+                                    ".address"
+                                ]
+                                
+                                collected_address = ""
+                                for selector in address_selectors:
+                                    address_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                    if address_elements:
+                                        collected_address = address_elements[0].text.strip()
+                                        print(f"주소 정보 수집 성공 ({selector}): {collected_address}")
+                                        break
+                                
+                                if collected_address:
+                                    self.current_collected_address = collected_address
+                                else:
+                                    print("주소 정보를 찾을 수 없음")
+                                    
+                            except Exception as addr_e:
+                                print(f"주소 정보 수집 중 오류: {addr_e}")
+                            
                             self.driver.switch_to.default_content()
                             return phone_number
                     
@@ -737,7 +757,7 @@ class NaverMapCrawler:
                 print(f"entryIframe 처리 중 오류: {e}")
                 self.driver.switch_to.default_content()
             
-            # 2단계: searchIframe에서 전화번호 찾기
+            # 2단계: searchIframe에서 전화번호 추출
             try:
                 print("searchIframe에서 전화번호 찾기...")
                 self.driver.switch_to.frame("searchIframe")
@@ -751,6 +771,35 @@ class NaverMapCrawler:
                     print(f"찾은 전화번호 텍스트: '{phone_number}'")
                     if phone_number and len(phone_number) > 5:
                         print(f"✅ searchIframe에서 전화번호 발견: {phone_number}")
+                        
+                        # 주소 정보도 수집 (다양한 선택자 시도)
+                        try:
+                            # 여러 주소 선택자 시도
+                            address_selectors = [
+                                "span.LDgIH",  # 네이버 지도 단일 결과 주소 요소
+                                "span.address",
+                                "span.Pb4bU",  # 네이버 지도 주소 요소
+                                "div.address",
+                                "span[data-testid='address']",
+                                ".address"
+                            ]
+                            
+                            collected_address = ""
+                            for selector in address_selectors:
+                                address_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                if address_elements:
+                                    collected_address = address_elements[0].text.strip()
+                                    print(f"주소 정보 수집 성공 ({selector}): {collected_address}")
+                                    break
+                            
+                            if collected_address:
+                                self.current_collected_address = collected_address
+                            else:
+                                print("주소 정보를 찾을 수 없음")
+                                
+                        except Exception as addr_e:
+                            print(f"주소 정보 수집 중 오류: {addr_e}")
+                        
                         self.driver.switch_to.default_content()
                         return phone_number
                     else:
@@ -774,6 +823,35 @@ class NaverMapCrawler:
                 print(f"찾은 전화번호 텍스트: '{phone_number}'")
                 if phone_number and len(phone_number) > 5:
                     print(f"✅ 메인 페이지에서 전화번호 발견: {phone_number}")
+                    
+                    # 주소 정보도 수집 (다양한 선택자 시도)
+                    try:
+                        # 여러 주소 선택자 시도
+                        address_selectors = [
+                            "span.LDgIH",  # 네이버 지도 단일 결과 주소 요소
+                            "span.address",
+                            "span.Pb4bU",  # 네이버 지도 주소 요소
+                            "div.address",
+                            "span[data-testid='address']",
+                            ".address"
+                        ]
+                        
+                        collected_address = ""
+                        for selector in address_selectors:
+                            address_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                            if address_elements:
+                                collected_address = address_elements[0].text.strip()
+                                print(f"주소 정보 수집 성공 ({selector}): {collected_address}")
+                                break
+                        
+                        if collected_address:
+                            self.current_collected_address = collected_address
+                        else:
+                            print("주소 정보를 찾을 수 없음")
+                            
+                    except Exception as addr_e:
+                        print(f"주소 정보 수집 중 오류: {addr_e}")
+                    
                     return phone_number
                 else:
                     print(f"전화번호가 너무 짧거나 비어있음: '{phone_number}'")
@@ -811,6 +889,35 @@ class NaverMapCrawler:
                         print(f"찾은 전화번호 텍스트: '{phone_number}'")
                         if phone_number and len(phone_number) > 5:
                             print(f"✅ entryIframe에서 전화번호 발견: {phone_number}")
+                            
+                            # 주소 정보도 수집 (다양한 선택자 시도)
+                            try:
+                                # 여러 주소 선택자 시도
+                                address_selectors = [
+                                    "span.LDgIH",  # 네이버 지도 단일 결과 주소 요소
+                                    "span.address",
+                                    "span.Pb4bU",  # 네이버 지도 주소 요소
+                                    "div.address",
+                                    "span[data-testid='address']",
+                                    ".address"
+                                ]
+                                
+                                collected_address = ""
+                                for selector in address_selectors:
+                                    address_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                    if address_elements:
+                                        collected_address = address_elements[0].text.strip()
+                                        print(f"주소 정보 수집 성공 ({selector}): {collected_address}")
+                                        break
+                                
+                                if collected_address:
+                                    self.current_collected_address = collected_address
+                                else:
+                                    print("주소 정보를 찾을 수 없음")
+                                    
+                            except Exception as addr_e:
+                                print(f"주소 정보 수집 중 오류: {addr_e}")
+                            
                             self.driver.switch_to.default_content()
                             return phone_number
                     
@@ -832,6 +939,17 @@ class NaverMapCrawler:
                 print(f"찾은 전화번호 텍스트: '{phone_number}'")
                 if phone_number and len(phone_number) > 5:
                     print(f"✅ 메인 페이지에서 전화번호 발견: {phone_number}")
+                    
+                    # 주소 정보도 수집
+                    try:
+                        address_elements = self.driver.find_elements(By.CSS_SELECTOR, "span.address")
+                        if address_elements:
+                            collected_address = address_elements[0].text.strip()
+                            self.current_collected_address = collected_address
+                            print(f"주소 정보 수집: {collected_address}")
+                    except Exception as addr_e:
+                        print(f"주소 정보 수집 중 오류: {addr_e}")
+                    
                     return phone_number
                 else:
                     print(f"전화번호가 너무 짧거나 비어있음: '{phone_number}'")
@@ -999,24 +1117,31 @@ class NaverMapCrawler:
                         update_status = "결과없음"
                         new_phone_for_save = None
                     
-                    # 결과 데이터 생성
-                    result_data = {
-                        '순번': row['순번'],
-                        '사업장명': row['사업장명'],
-                        '인허가일자': row['인허가일자'],
-                        '영업상태명': row['영업상태명'],
-                        '기존_소재지전화': row['소재지전화'],
-                        '새_소재지전화': new_phone_for_save,
-                        '소재지전체주소': row['소재지전체주소'],
-                        '도로명전체주소': row['도로명전체주소'],
-                        '도로명우편번호': row['도로명우편번호'],
-                        '업태구분명': row['업태구분명'],
-                        '위생업태명': row['위생업태명'],
-                        '업데이트_상태': self.get_update_status(row['소재지전화'], new_phone_for_save, update_status),
-                        '주소_유사도_점수': self.get_address_similarity_score(row['소재지전체주소'], new_phone_for_save),
-                        '수집된_주소': self.get_collected_address(new_phone_for_save),
-                        '신뢰도_등급': self.get_confidence_grade(self.get_address_similarity_score(row['소재지전체주소'], new_phone_for_save))
-                    }
+                    # 결과 데이터 생성 (정리된 파일의 컬럼명 사용)
+                    try:
+                        # 정리된 파일의 '기존소재지전화' 컬럼을 '기존_소재지전화'로 저장
+                        original_phone = row['기존소재지전화']
+                        
+                        result_data = {
+                            '순번': row['순번'],
+                            '사업장명': row['사업장명'],
+                            '인허가일자': row['인허가일자'],
+                            '영업상태명': row['영업상태명'],
+                            '기존_소재지전화': original_phone,
+                            '새_소재지전화': new_phone_for_save,
+                            '소재지전체주소': row['소재지전체주소'],
+                            '도로명전체주소': row['도로명전체주소'],
+                            '도로명우편번호': row['도로명우편번호'],
+                            '업태구분명': row['업태구분명'],
+                            '위생업태명': row['위생업태명'],
+                            '업데이트_상태': self.get_update_status(original_phone, new_phone_for_save, update_status),
+                            '주소_유사도_점수': self.get_address_similarity_score(row['소재지전체주소'], new_phone_for_save),
+                            '수집된_주소': self.get_collected_address(new_phone_for_save)
+                        }
+                    except KeyError as e:
+                        print(f"❌ 컬럼명 오류: {e}")
+                        print(f"📊 사용 가능한 컬럼: {list(row.index)}")
+                        raise e
                     
                     # 실시간 저장 (1개씩)
                     if self.save_single_result(result_data):
@@ -1052,23 +1177,46 @@ class NaverMapCrawler:
                     self.logger.error(f"행 처리 중 오류 발생: {e}")
                     print(f"행 처리 중 오류 발생: {e}")
                     # 오류 발생 시에도 실시간 저장
-                    error_data = {
-                        '순번': row['순번'],
-                        '사업장명': row['사업장명'],
-                        '인허가일자': row['인허가일자'],
-                        '영업상태명': row['영업상태명'],
-                        '기존_소재지전화': row['소재지전화'],
-                        '새_소재지전화': None,
-                        '소재지전체주소': row['소재지전체주소'],
-                        '도로명전체주소': row['도로명전체주소'],
-                        '도로명우편번호': row['도로명우편번호'],
-                        '업태구분명': row['업태구분명'],
-                        '위생업태명': row['위생업태명'],
-                        '업데이트_상태': f'오류 발생: {str(e)}',
-                        '주소_유사도_점수': 0,
-                        '수집된_주소': "",
-                        '신뢰도_등급': "오류 발생"
-                    }
+                    try:
+                        # 정리된 파일의 '기존소재지전화' 컬럼을 '기존_소재지전화'로 저장
+                        original_phone = row['기존소재지전화']
+                        
+                        error_data = {
+                            '순번': row['순번'],
+                            '사업장명': row['사업장명'],
+                            '인허가일자': row['인허가일자'],
+                            '영업상태명': row['영업상태명'],
+                            '기존_소재지전화': original_phone,
+                            '새_소재지전화': None,
+                            '소재지전체주소': row['소재지전체주소'],
+                            '도로명전체주소': row['도로명전체주소'],
+                            '도로명우편번호': row['도로명우편번호'],
+                            '업태구분명': row['업태구분명'],
+                            '위생업태명': row['위생업태명'],
+                            '업데이트_상태': f'오류 발생: {str(e)}',
+                            '주소_유사도_점수': 0,
+                            '수집된_주소': ""
+                        }
+                    except KeyError as key_error:
+                        print(f"❌ 오류 데이터 생성 중 컬럼명 오류: {key_error}")
+                        print(f"📊 사용 가능한 컬럼: {list(row.index)}")
+                        # 기본 오류 데이터 생성
+                        error_data = {
+                            '순번': row.get('순번', 0),
+                            '사업장명': row.get('사업장명', '알 수 없음'),
+                            '인허가일자': row.get('인허가일자', ''),
+                            '영업상태명': row.get('영업상태명', ''),
+                            '기존_소재지전화': '',
+                            '새_소재지전화': None,
+                            '소재지전체주소': row.get('소재지전체주소', ''),
+                            '도로명전체주소': row.get('도로명전체주소', ''),
+                            '도로명우편번호': row.get('도로명우편번호', ''),
+                            '업태구분명': row.get('업태구분명', ''),
+                            '위생업태명': row.get('위생업태명', ''),
+                            '업데이트_상태': f'컬럼명 오류: {str(key_error)}',
+                            '주소_유사도_점수': 0,
+                            '수집된_주소': ""
+                        }
                     
                     # 오류 데이터도 실시간 저장
                     if self.save_single_result(error_data):
