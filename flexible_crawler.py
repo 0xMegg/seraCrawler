@@ -6,6 +6,7 @@ import platform
 import os
 import random
 import csv
+import glob
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -133,21 +134,63 @@ class FlexibleCrawler:
                 
         return None
         
-    def initialize_result_file(self):
+    def check_existing_results(self):
+        """기존 결과 파일 확인"""
+        try:
+            # 현재 디렉토리에서 flexible_crawling_*.csv 파일들 찾기
+            csv_files = glob.glob('flexible_crawling_*.csv')
+            
+            if not csv_files:
+                return None
+            
+            # 가장 최근 파일 선택
+            latest_file = max(csv_files, key=os.path.getctime)
+            print(f"📋 기존 결과 파일 발견: {latest_file}")
+            self.logger.info(f"📋 기존 결과 파일 발견: {latest_file}")
+            
+            # 파일 읽기
+            df = pd.read_csv(latest_file)
+            if len(df) > 0:
+                print(f"📊 기존 결과: {len(df)}개 행")
+                self.logger.info(f"📊 기존 결과: {len(df)}개 행")
+                return df.to_dict('records')
+            
+            return None
+            
+        except Exception as e:
+            print(f"기존 결과 확인 중 오류: {e}")
+            self.logger.error(f"기존 결과 확인 중 오류: {e}")
+            return None
+    
+    def initialize_result_file(self, append_mode=False):
         """결과 파일 초기화"""
         try:
-            timestamp = datetime.now().strftime("%y%m%d%H%M%S")
-            self.result_file = f'flexible_crawling_{timestamp}.csv'
+            if append_mode:
+                # 기존 파일에 추가 모드
+                csv_files = glob.glob('flexible_crawling_*.csv')
+                if csv_files:
+                    self.result_file = max(csv_files, key=os.path.getctime)
+                    print(f"📁 기존 결과 파일에 추가: {self.result_file}")
+                    self.logger.info(f"📁 기존 결과 파일에 추가: {self.result_file}")
+                    return
+                else:
+                    print("⚠️ 기존 파일을 찾을 수 없어 새 파일 생성")
+                    append_mode = False
             
-            # 설정에서 출력 컬럼 가져오기
-            headers = self.config['output_columns']
-            
-            with open(self.result_file, 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-            
-            print(f"📁 결과 파일 초기화: {self.result_file}")
-            self.logger.info(f"결과 파일 초기화: {self.result_file}")
+            if not append_mode:
+                # 새 파일 생성
+                timestamp = datetime.now().strftime("%y%m%d%H%M%S")
+                self.result_file = f'flexible_crawling_{timestamp}.csv'
+                
+                # 설정에서 출력 컬럼 가져오기
+                headers = self.config['output_columns']
+                
+                with open(self.result_file, 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers)
+                
+                print(f"📁 새 결과 파일 생성: {self.result_file}")
+                self.logger.info(f"새 결과 파일 생성: {self.result_file}")
             
         except Exception as e:
             print(f"결과 파일 초기화 중 오류: {e}")
@@ -194,7 +237,7 @@ class FlexibleCrawler:
             
             self.driver.get(search_url)
             
-            wait_time = random.uniform(2.0, 5.0)  # 2초 단축
+            wait_time = random.uniform(3.5, 5.0)  # 3.5초 최소값으로 설정
             print(f"1차 검색 결과 로딩 중... ({wait_time:.1f}초)")
             self.logger.info(f"1차 검색 결과 로딩 대기 중... ({wait_time:.1f}초)")
             time.sleep(wait_time)
@@ -215,7 +258,7 @@ class FlexibleCrawler:
             
             self.driver.get(search_url)
             
-            wait_time = random.uniform(2.0, 5.0)  # 2초 단축
+            wait_time = random.uniform(3.5, 5.0)  # 3.5초 최소값으로 설정
             print(f"2차 검색 결과 로딩 중... ({wait_time:.1f}초)")
             self.logger.info(f"2차 검색 결과 로딩 대기 중... ({wait_time:.1f}초)")
             time.sleep(wait_time)
@@ -879,9 +922,7 @@ class FlexibleCrawler:
     def get_address_similarity_score(self, original_address, new_phone):
         """주소 유사도 점수 계산"""
         try:
-            if not new_phone:
-                return 0
-            
+            # MULTIPLE_RESULTS_NO_PHONE 케이스에서도 수집된 주소가 있으면 점수 계산
             if hasattr(self, 'current_collected_address') and self.current_collected_address:
                 return self.compare_address_similarity(self.current_collected_address)
             else:
@@ -893,9 +934,7 @@ class FlexibleCrawler:
     def get_collected_address(self, new_phone):
         """수집된 주소 반환 (구주소만)"""
         try:
-            if not new_phone:
-                return ""
-            
+            # MULTIPLE_RESULTS_NO_PHONE 케이스에서도 수집된 주소 반환
             # 구주소가 있으면 구주소 반환
             if hasattr(self, 'current_collected_jibun_address') and self.current_collected_jibun_address:
                 return self.current_collected_jibun_address
@@ -904,11 +943,15 @@ class FlexibleCrawler:
             if hasattr(self, 'current_collected_address') and self.current_collected_address:
                 return self.current_collected_address
             
-            return "전화번호 수집 성공 (주소 정보 없음)"
+            # 전화번호가 있는 경우에만 이 메시지 반환
+            if new_phone:
+                return "전화번호 수집 성공 (주소 정보 없음)"
+            else:
+                return ""
         except Exception as e:
             return f"주소 수집 중 오류: {str(e)}"
     
-    def crawl_phone_numbers(self, test_count=None):
+    def crawl_phone_numbers(self, test_count=None, start_from_index=None):
         """전화번호 크롤링 메인 함수"""
         try:
             # CSV 파일 읽기
@@ -944,10 +987,31 @@ class FlexibleCrawler:
                 test_df = df.copy()
                 print(f"전체 데이터 {len(df)}개 선택")
             
-            # 결과 파일 초기화
-            self.initialize_result_file()
+            # 기존 결과 파일 확인 및 재시작 처리
+            existing_results = self.check_existing_results()
+            start_index = 0
             
-            for index, row in test_df.iterrows():
+            if start_from_index is not None:
+                # 사용자가 지정한 인덱스부터 시작
+                start_index = start_from_index - 1  # 0-based 인덱스로 변환
+                print(f"🚀 지정된 인덱스 {start_from_index}부터 크롤링 시작")
+                self.logger.info(f"🚀 지정된 인덱스 {start_from_index}부터 크롤링 시작")
+            elif existing_results and len(existing_results) > 0:
+                # 기존 결과가 있으면 마지막 처리된 인덱스 다음부터 시작
+                last_processed_index = max(int(row['인덱스']) for row in existing_results if pd.notna(row['인덱스']))
+                start_index = last_processed_index
+                print(f"🔄 기존 결과 발견! 인덱스 {last_processed_index + 1}부터 재시작")
+                self.logger.info(f"🔄 기존 결과 발견! 인덱스 {last_processed_index + 1}부터 재시작")
+            else:
+                # 새로 시작
+                print(f"🆕 새로운 크롤링 시작")
+                self.logger.info(f"🆕 새로운 크롤링 시작")
+            
+            # 결과 파일 초기화 (기존 결과가 있으면 append 모드)
+            self.initialize_result_file(append_mode=start_index > 0)
+            
+            # 시작 인덱스부터 처리
+            for index, row in test_df.iloc[start_index:].iterrows():
                 try:
                     print(f"\n{'='*50}")
                     total_count = len(test_df)
@@ -998,6 +1062,8 @@ class FlexibleCrawler:
                     if new_phone == "MULTIPLE_RESULTS_NO_PHONE":
                         update_status = "MULTIPLE_RESULTS_NO_PHONE"
                         new_phone_for_save = None
+                        # MULTIPLE_RESULTS_NO_PHONE 케이스에서도 수집된 주소 정보 유지
+                        # current_collected_address는 이미 설정되어 있음
                     elif new_phone:
                         update_status = "true"
                         new_phone_for_save = new_phone
@@ -1092,11 +1158,73 @@ if __name__ == "__main__":
     if platform.system() == "Darwin":
         print("맥OS 환경에서 실행됩니다.")
     
+    # 재시작 옵션 입력
+    print("\n" + "="*50)
+    print("크롤링 옵션 선택:")
+    print("1. 새로 시작")
+    print("2. 기존 결과에서 자동 재시작")
+    print("3. 특정 인덱스부터 시작")
+    print("4. 테스트용 (정해진 갯수만 크롤링)")
+    print("="*50)
+    
+    while True:
+        try:
+            choice = input("선택하세요 (1/2/3/4): ").strip()
+            if choice in ['1', '2', '3', '4']:
+                break
+            else:
+                print("1, 2, 3, 4 중에서 선택해주세요.")
+        except KeyboardInterrupt:
+            print("\n프로그램 종료")
+            exit()
+    
     crawler = FlexibleCrawler()
     
     try:
-        # 테스트용 5개 처리 (속도 개선 테스트)
-        result = crawler.crawl_phone_numbers(test_count=5)
+        if choice == '1':
+            # 새로 시작
+            print("\n🆕 새로운 크롤링 시작")
+            result = crawler.crawl_phone_numbers()
+        elif choice == '2':
+            # 기존 결과에서 자동 재시작
+            print("\n🔄 기존 결과에서 자동 재시작")
+            result = crawler.crawl_phone_numbers()
+        elif choice == '3':
+            # 특정 인덱스부터 시작
+            while True:
+                try:
+                    start_index = input("시작할 인덱스를 입력하세요 (1부터): ").strip()
+                    start_index = int(start_index)
+                    if start_index >= 1:
+                        break
+                    else:
+                        print("1 이상의 숫자를 입력해주세요.")
+                except ValueError:
+                    print("올바른 숫자를 입력해주세요.")
+                except KeyboardInterrupt:
+                    print("\n프로그램 종료")
+                    exit()
+            
+            print(f"\n🚀 인덱스 {start_index}부터 크롤링 시작")
+            result = crawler.crawl_phone_numbers(start_from_index=start_index)
+        elif choice == '4':
+            # 테스트용으로 정해진 갯수만 크롤링
+            while True:
+                try:
+                    test_count = input("테스트할 데이터 갯수를 입력하세요 (1부터): ").strip()
+                    test_count = int(test_count)
+                    if test_count >= 1:
+                        break
+                    else:
+                        print("1 이상의 숫자를 입력해주세요.")
+                except ValueError:
+                    print("올바른 숫자를 입력해주세요.")
+                except KeyboardInterrupt:
+                    print("\n프로그램 종료")
+                    exit()
+            
+            print(f"\n🧪 테스트용 크롤링 시작: {test_count}개 데이터")
+            result = crawler.crawl_phone_numbers(test_count=test_count)
         
         if result:
             print(f"\n크롤링 완료! {result}")
@@ -1105,6 +1233,7 @@ if __name__ == "__main__":
             
     except KeyboardInterrupt:
         print("\n사용자에 의해 중단됨")
+        print("💡 재시작하려면 프로그램을 다시 실행하고 옵션 2나 3을 선택하세요.")
     except Exception as e:
         print(f"\n예상치 못한 오류: {e}")
     finally:
