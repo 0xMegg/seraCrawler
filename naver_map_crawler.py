@@ -18,6 +18,11 @@ from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 import logging
 
+# ===== 설정 변수 =====
+# 타겟 CSV 파일명 설정 (필요에 따라 변경하세요)
+TARGET_CSV_FILE = "stores.csv"  # 타겟 CSV 파일
+# ===================
+
 class NaverMapCrawler:
     def __init__(self):
         self.setup_driver()
@@ -540,7 +545,7 @@ class NaverMapCrawler:
                             # 메인 페이지로 복귀
                             self.driver.switch_to.default_content()
                             
-                            # 주소 유사도 비교 (stores.csv의 소재지전체주소와 비교)
+                            # 주소 유사도 비교 (타겟 CSV의 소재지전체주소와 비교)
                             score = self.compare_address_similarity(search_address)
                             print(f"주소 유사도 점수: {score}")
                             
@@ -1487,29 +1492,14 @@ if __name__ == "__main__":
     crawler = NaverMapCrawler()
     
     try:
-        # 원본 데이터 파일 선택
-        original_file = "거제도 db - 음식점.csv"
-        if os.path.exists(original_file):
-            print(f"원본 데이터 발견: {original_file}")
-            print("원본 데이터 정리 시작...")
+        # 타겟 CSV 파일 사용
+        input_file = TARGET_CSV_FILE
+        if not os.path.exists(input_file):
+            print(f"오류: {input_file} 파일을 찾을 수 없습니다.")
+            exit(1)
             
-            # 1단계: 원본 데이터 정리 및 순번 재정렬
-            cleaned_file = crawler.clean_original_data(original_file)
-            print(f"정리된 파일: {cleaned_file}")
-            
-            # 2단계: 정리된 파일로 크롤링 실행
-            print("크롤링 시작...")
-            result_file = crawler.update_phone_numbers(cleaned_file, test_count=None)
-            
-        else:
-            # 원본 파일이 없으면 stores.csv 사용
-            input_file = "stores.csv"
-            if not os.path.exists(input_file):
-                print(f"오류: {input_file} 파일을 찾을 수 없습니다.")
-                exit(1)
-                
-            print(f"입력 파일: {input_file}")
-            result_file = crawler.update_phone_numbers(input_file, test_count=None)
+        print(f"입력 파일: {input_file}")
+        result_file = crawler.update_phone_numbers(input_file, test_count=None)
         
         if result_file:
             print(f"\n크롤링 완료! {result_file}")
