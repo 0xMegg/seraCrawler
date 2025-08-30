@@ -3,13 +3,13 @@
 
 CSV_CONFIG = {
     # 타겟 CSV 파일명
-    'target_file': 'stores02.csv',
+    'target_file': 'forTest.csv',
     
     # CSV 컬럼 매핑 (실제 CSV 파일의 컬럼명)
     'columns': {
-        'business_name': '업소명',      # 사업장명 컬럼
-        'address': '소재지(도로명)',     # 주소 컬럼 (동이름 추출용)
-        'phone': '전화번호'             # 기존 전화번호 컬럼 (선택사항)
+        'business_name': '사업장명',      # 사업장명 컬럼
+        'address': '기존주소',     # 주소 컬럼 (동이름 추출용)
+        'phone': '기존전화번호'             # 기존 전화번호 컬럼 (선택사항)
     },
     
     # 출력 CSV 컬럼 순서
